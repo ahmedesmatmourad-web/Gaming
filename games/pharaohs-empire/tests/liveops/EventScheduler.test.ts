@@ -16,4 +16,11 @@ describe('EventScheduler', () => {
     expect(scheduler.getActiveEvent(500)).toBeNull();
     expect(scheduler.getActiveEvent(2000)).toBeNull();
   });
+
+  it('returns the event when now equals startTime (inclusive boundary)', () => {
+    const scheduler = new EventScheduler([
+      { id: 'test_event', name: 'Test', startTime: 1000, endTime: 2000, bonusMultiplier: 2 }
+    ]);
+    expect(scheduler.getActiveEvent(1000)?.id).toBe('test_event');
+  });
 });
