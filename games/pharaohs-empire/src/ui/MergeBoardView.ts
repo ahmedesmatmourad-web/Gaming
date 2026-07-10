@@ -42,4 +42,15 @@ export class MergeBoardView {
       }
     }
   }
+
+  destroy(): void {
+    for (const row of this.cellSprites) {
+      for (const rect of row) rect.destroy();
+    }
+    for (const row of this.labels) {
+      for (const label of row) label.destroy();
+    }
+    this.cellSprites = [];
+    this.labels = [];
+  }
 }

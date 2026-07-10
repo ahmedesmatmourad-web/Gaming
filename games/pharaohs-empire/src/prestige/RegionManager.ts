@@ -35,8 +35,19 @@ export class RegionManager {
   }
 
   getProductionRate(resource: 'gold' | 'monument_materials' | 'relic_materials'): number {
-    const base = this.getActiveRegion().definition.baseProductionPerSecond[resource];
-    return this.legacy.applyTo(base);
+    // Active region produces at its full base rate; every passive (previously
+    // completed) region keeps generating at a flat 25% of its base rate. Both
+    // are scaled by the current legacy multiplier. The 25% factor is a
+    // deliberate MVP simplification of game spec §3's "prior region keeps
+    // passively generating at a reduced rate" — no per-region tuning data
+    // exists yet, so a single flat factor is used.
+    let total = this.legacy.applyTo(this.getActiveRegion().definition.baseProductionPerSecond[resource]);
+    for (const region of this.regions) {
+      if (region.passiveOnly) {
+        total += this.legacy.applyTo(region.definition.baseProductionPerSecond[resource] * 0.25);
+      }
+    }
+    return total;
   }
 
   canExpand(now: number = Date.now()): boolean {

@@ -31,8 +31,23 @@ describe('RegionManager', () => {
       slot.speedUp();
     }
     manager.expandToNextRegion(1);
-    // valley_of_the_kings base gold rate is 2, legacy gain from nile_delta is 0.5 -> multiplier 1.5
-    expect(manager.getProductionRate('gold')).toBe(3);
+    // valley_of_the_kings base gold rate is 2, legacy gain from nile_delta is 0.5 -> multiplier 1.5.
+    // Active contributes 1.5 * 2 = 3; passive nile_delta contributes 1.5 * (1 * 0.25) = 0.375.
+    expect(manager.getProductionRate('gold')).toBeCloseTo(3.375, 6);
+  });
+
+  it('adds 25% of each passive region base rate (legacy-scaled) to the active region rate', () => {
+    const manager = new RegionManager();
+    for (const slot of manager.getActiveRegion().construction.getSlots()) {
+      slot.fill({ track: 'monuments', tier: 5 }, 0);
+      slot.speedUp();
+    }
+    manager.expandToNextRegion(1);
+    // After expansion: legacy multiplier = 1 + 0.5 = 1.5.
+    // Active region (valley_of_the_kings) gold base = 2.
+    // Passive region (nile_delta) gold base = 1, contributes 25%.
+    // Expected = 1.5 * 2 + 1.5 * (1 * 0.25) = 3 + 0.375 = 3.375.
+    expect(manager.getProductionRate('gold')).toBeCloseTo(3.375, 6);
   });
 
   it('refuses to expand past the last region', () => {
