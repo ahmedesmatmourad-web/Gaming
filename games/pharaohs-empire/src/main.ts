@@ -1,2 +1,4 @@
-console.log("Pharaoh's Empire booting...");
-export {};
+import Phaser from 'phaser';
+import { GameConfig } from './config/GameConfig';
+
+new Phaser.Game(GameConfig);
