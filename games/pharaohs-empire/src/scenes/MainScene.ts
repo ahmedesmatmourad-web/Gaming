@@ -65,6 +65,10 @@ export class MainScene extends Phaser.Scene {
     const save = this.saveManager.load();
     if (save) {
       this.wallet = Wallet.deserialize(save.wallet);
+      // Restore prestige progress before buildBoards() reads the active region to
+      // size the boards, so a returning player lands in the correct region at the
+      // correct legacy multiplier (and offline accrual uses the right rates).
+      this.regionManager.restoreState(save.activeRegionIndex, save.legacyMultiplier);
     }
     this.offlineController = new OfflineClaimController(this.wallet, this.idleProducer, this.adService);
     this.analytics.track('session_start', { hadSave: !!save });
@@ -78,8 +82,7 @@ export class MainScene extends Phaser.Scene {
     if (save) {
       const elapsedMs = Date.now() - save.lastActiveTimestamp;
       if (elapsedMs >= OFFLINE_THRESHOLD_MS) {
-        const accrued = this.offlineController.computeAccrual(this.currentRegionRates(), elapsedMs);
-        this.showOfflinePanel(accrued);
+        this.showOfflinePanel(elapsedMs);
       }
     }
   }
@@ -141,11 +144,24 @@ export class MainScene extends Phaser.Scene {
     };
   }
 
-  private showOfflinePanel(accrued: Record<string, number>): void {
-    this.offlinePanel = new OfflineClaimPanel(this, this.offlineController, this.analytics, accrued, () => {
-      this.offlinePanel = undefined;
-      this.resourceBar.refresh();
-    });
+  private showOfflinePanel(elapsedMs: number): void {
+    // Bind the recompute to the ORIGINAL offline gap: after the player watches an
+    // ad to extend the cap, the accrual for the SAME elapsed window is recomputed
+    // against the now-larger cap, so an extension that unclamps the current session
+    // pays off immediately (not just next time).
+    const recomputeAccrued = () => this.offlineController.computeAccrual(this.currentRegionRates(), elapsedMs);
+    const accrued = recomputeAccrued();
+    this.offlinePanel = new OfflineClaimPanel(
+      this,
+      this.offlineController,
+      this.analytics,
+      accrued,
+      recomputeAccrued,
+      () => {
+        this.offlinePanel = undefined;
+        this.resourceBar.refresh();
+      }
+    );
   }
 
   private handleCellTap(

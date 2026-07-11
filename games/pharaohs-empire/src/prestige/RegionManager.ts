@@ -26,6 +26,25 @@ export class RegionManager {
     };
   }
 
+  /**
+   * Rebuild region state from a persisted save. Regions 0..activeRegionIndex are
+   * re-activated; every region before the active one is marked passiveOnly so
+   * getProductionRate's passive-region summing still contributes. The historical
+   * monument-construction progress of passive regions is not preserved by the
+   * save format (accepted MVP limitation) — only their passive status is.
+   */
+  restoreState(activeRegionIndex: number, legacyMultiplierValue: number): void {
+    this.regions = [];
+    for (let index = 0; index <= activeRegionIndex; index += 1) {
+      this.activateRegion(index);
+      if (index < activeRegionIndex) {
+        this.regions[index].passiveOnly = true;
+      }
+    }
+    this.activeIndex = activeRegionIndex;
+    this.legacy.setValue(legacyMultiplierValue);
+  }
+
   getActiveRegion(): RegionState {
     return this.regions[this.activeIndex];
   }

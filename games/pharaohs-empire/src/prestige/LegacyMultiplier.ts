@@ -9,6 +9,10 @@ export class LegacyMultiplier {
     this.value += amount;
   }
 
+  setValue(value: number): void {
+    this.value = value;
+  }
+
   applyTo(baseRate: number): number {
     return baseRate * this.value;
   }

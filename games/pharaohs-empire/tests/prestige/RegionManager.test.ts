@@ -67,6 +67,26 @@ describe('RegionManager', () => {
     expect(manager.getActiveRegion().definition.id).toBe('valley_of_the_kings');
   });
 
+  it('restoreState to region 0 with legacy 1 matches a fresh manager', () => {
+    const fresh = new RegionManager();
+    const restored = new RegionManager();
+    restored.restoreState(0, 1);
+    expect(restored.getActiveRegion().definition.id).toBe(fresh.getActiveRegion().definition.id);
+    expect(restored.getActiveRegion().definition.id).toBe('nile_delta');
+    expect(restored.getAllRegions()[0].passiveOnly).toBe(false);
+    expect(restored.getLegacyMultiplier().getValue()).toBe(1);
+    expect(restored.getProductionRate('gold')).toBeCloseTo(fresh.getProductionRate('gold'), 6);
+  });
+
+  it('restoreState to region 1 reactivates prior regions as passive and sets legacy', () => {
+    const manager = new RegionManager();
+    manager.restoreState(1, 1.5);
+    expect(manager.getActiveRegion().definition.id).toBe('valley_of_the_kings');
+    expect(manager.getAllRegions()[0].definition.id).toBe('nile_delta');
+    expect(manager.getAllRegions()[0].passiveOnly).toBe(true);
+    expect(manager.getLegacyMultiplier().getValue()).toBe(1.5);
+  });
+
   it('never resets or destroys the old region after expansion', () => {
     const manager = new RegionManager();
     const oldConstruction = manager.getActiveRegion().construction;

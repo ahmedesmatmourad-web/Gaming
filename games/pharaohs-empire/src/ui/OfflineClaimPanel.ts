@@ -11,12 +11,14 @@ import { AnalyticsService } from '../analytics/AnalyticsService';
 export class OfflineClaimPanel {
   private objects: Phaser.GameObjects.GameObject[] = [];
   private destroyed = false;
+  private accruedText!: Phaser.GameObjects.Text;
 
   constructor(
     private scene: Phaser.Scene,
     private controller: OfflineClaimController,
     private analytics: AnalyticsService,
     private accrued: Record<string, number>,
+    private recomputeAccrued: () => Record<string, number>,
     private onClosed: () => void
   ) {
     const width = scene.scale.width;
@@ -38,15 +40,19 @@ export class OfflineClaimPanel {
     const top = height / 2 - 180;
     this.text(width / 2, top, 'Welcome Back, Pharaoh!', '24px', '#f2d16b', 0.5);
 
-    const lines = ['While you were away you gathered:'];
-    for (const [resource, amount] of Object.entries(this.accrued)) {
-      lines.push(`  ${this.label(resource)}: ${Math.floor(amount)}`);
-    }
-    this.text(width / 2, top + 50, lines.join('\n'), '18px', '#ffffff', 0.5);
+    this.accruedText = this.text(width / 2, top + 50, this.accruedLines(), '18px', '#ffffff', 0.5);
 
     this.button(width / 2, top + 200, 'Claim', () => this.handleClaim());
     this.button(width / 2, top + 260, 'Watch Ad: Double', () => this.handleDouble());
     this.button(width / 2, top + 320, 'Watch Ad: Extend Cap (+4h)', () => this.handleExtend());
+  }
+
+  private accruedLines(): string {
+    const lines = ['While you were away you gathered:'];
+    for (const [resource, amount] of Object.entries(this.accrued)) {
+      lines.push(`  ${this.label(resource)}: ${Math.floor(amount)}`);
+    }
+    return lines.join('\n');
   }
 
   private label(resource: string): string {
@@ -108,6 +114,13 @@ export class OfflineClaimPanel {
     // Extending the cap is a separate action; it does NOT close the panel so the
     // player can still choose Claim or Double afterward.
     const success = await this.controller.extendCap(4);
+    if (success && !this.destroyed) {
+      // Recompute the SAME offline window against the now-larger cap so that, if
+      // accrual was previously clamped, the extra resources are reflected right
+      // now — both in the displayed totals and in what Claim/Double will credit.
+      this.accrued = this.recomputeAccrued();
+      this.accruedText.setText(this.accruedLines());
+    }
     this.analytics.track('cap_extended', { success });
   }
 
