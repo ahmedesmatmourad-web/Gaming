@@ -79,7 +79,7 @@ export class MainScene extends Phaser.Scene {
         // size the boards, so a returning player lands in the correct region at the
         // correct legacy multiplier (and offline accrual uses the right rates).
         this.regionManager.restoreState(save.activeRegionIndex, save.legacyMultiplier);
-        this.idleProducer.setCapMs(save.offlineCapMs);
+        this.idleProducer.setCapMs(save.offlineCapMs ?? this.idleProducer.getCapMs());
       } catch (err) {
         console.warn('Failed to restore save; starting a fresh game.', err);
         this.wallet = new Wallet();
