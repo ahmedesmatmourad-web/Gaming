@@ -1857,6 +1857,144 @@ git commit -m "docs: add setup, build, and web-portal deployment instructions"
 
 ---
 
+---
+
+### Task 15: Integration Wiring (Persistence, Offline+Ads, Construction/Prestige, Analytics)
+
+**Added after the final whole-branch review found that Tasks 2, 6, 8, 9, 10, 11, 12 were each individually correct and tested, but never actually wired into the playable `MainScene` built in Task 13 — a plan-scoping gap, not an implementer error. This task closes it.**
+
+**Files:**
+- Modify: `src/scenes/MainScene.ts`
+- Create: `src/ui/OfflineClaimPanel.ts`, `src/ui/MonumentPanel.ts`
+- Modify: `src/prestige/RegionManager.ts` (small, documented simplification — see Step 2)
+- Test: `tests/prestige/RegionManager.test.ts` (extend for the passive-production change)
+
+**Interfaces:**
+- Consumes: `SaveManager`, `OfflineClaimController`, `MockAdService`, `ConstructionManager`/`MonumentSlot`, `RegionManager.expandToNextRegion`/`canExpand`, `ConsoleAnalyticsService`, `EventScheduler` (all already built, tested, and approved in Tasks 6, 8–12).
+- Produces: a fully-wired `MainScene` where every previously-dark module actually runs.
+
+- [ ] **Step 1: Wire persistence + offline claim on boot**
+
+In `MainScene.create()`, before building boards: instantiate `SaveManager`, `MockAdService`, `OfflineClaimController(wallet, idleProducer, adService)`, `ConsoleAnalyticsService`. Call `saveManager.load()`. If a save exists, restore `wallet` via `Wallet.deserialize(save.wallet)` and compute `elapsedMs = Date.now() - save.lastActiveTimestamp`. If `elapsedMs >= 60_000` (1 minute — low threshold so the effect is visible in manual/portal testing), compute `accrued = offlineClaimController.computeAccrual(currentRegionRates, elapsedMs)` and show `OfflineClaimPanel` (Step 3) before the board becomes interactive; otherwise skip straight to the board. If no save exists, proceed directly (first-ever session). Call `analytics.track('session_start', { hadSave: !!save })`.
+
+Add a `window.addEventListener('beforeunload', () => this.saveGame())` and also save every 30 seconds via a Phaser timed event (`this.time.addEvent({ delay: 30_000, loop: true, callback: () => this.saveGame() })`). `saveGame()` builds a `SaveData` object from the current `wallet.serialize()`, `Date.now()`, `regionManager.getLegacyMultiplier().getValue()`, and the active region index, then calls `saveManager.save(data)`.
+
+- [ ] **Step 2: Make passive (non-active) regions actually contribute production**
+
+In `RegionManager`, change `getProductionRate` to sum the active region's full rate plus 25% of every passive region's base rate (each scaled by the current legacy multiplier), rather than only ever reading the active region:
+
+```ts
+getProductionRate(resource: 'gold' | 'monument_materials' | 'relic_materials'): number {
+  let total = this.legacy.applyTo(this.getActiveRegion().definition.baseProductionPerSecond[resource]);
+  for (const region of this.regions) {
+    if (region.passiveOnly) {
+      total += this.legacy.applyTo(region.definition.baseProductionPerSecond[resource] * 0.25);
+    }
+  }
+  return total;
+}
+```
+
+This is a deliberate, documented simplification of "the prior region's board... keeps passively generating resources at a reduced rate" (game spec §3) — a flat 25% factor rather than a per-region-tuned rate, since no such tuning data exists yet. Add a test: after expanding past `nile_delta`, `getProductionRate('gold')` should equal the new active region's rate plus `0.25 * nile_delta.baseProductionPerSecond.gold`, both scaled by the post-expansion legacy multiplier.
+
+- [ ] **Step 3: Build `OfflineClaimPanel`**
+
+A simple Phaser UI group shown as an overlay: text showing the accrued amounts, a "Claim" button (calls `offlineClaimController.claim(accrued)`, tracks `analytics.track('offline_claim', { doubled: false })`, hides the panel), a "Watch Ad: Double" button (calls `await offlineClaimController.claimDoubled(accrued)`, tracks `analytics.track('offline_claim', { doubled: result.doubled })`, hides the panel), and a "Watch Ad: Extend Cap" button (calls `await offlineClaimController.extendCap(4)`, tracks `analytics.track('cap_extended', { success })`, does NOT hide the panel — it's a separate action the player can take before or after claiming). Hide the underlying boards (or place this panel above them at a higher depth) while shown.
+
+- [ ] **Step 4: Build `MonumentPanel` and wire the construction sink**
+
+A simple Phaser UI group below the Monuments board showing one small square per `ConstructionManager` slot (empty = outline only, filled+building = filled with a countdown text, complete = filled solid). Add a "Build Monument" button: on click, scan the Monuments `MergeBoard` for any item at `getMaxTier('monuments')`; if found and an empty `MonumentSlot` exists, `board.removeItem(coord)` and `slot.fill(item)`, then `analytics.track('monument_filled')`. Add a "Speed Up (Ad)" button per in-progress slot: calls `await adService.showRewarded('speed_up')`; if completed, `slot.speedUp()`. On each `update()` tick, refresh slot visuals from `constructionManager.completedCount()`/`isRegionComplete()`; the first tick a slot transitions to complete, track `analytics.track('monument_completed')`.
+
+- [ ] **Step 5: Wire the region-expansion trigger**
+
+When `regionManager.canExpand()` becomes true, show an "Advance to Next Region" button. On click: call `regionManager.expandToNextRegion()`, track `analytics.track('region_expanded', { newRegionId: regionManager.getActiveRegion().definition.id })`, then rebuild the Monuments/Treasury `MergeBoard`+`SpawnController`+`MergeBoardView` instances sized to the new region's `boardRows`/`boardCols` (destroying the old Phaser view objects, keeping the domain `MergeBoard` data if you want to preserve on-screen history — for this MVP it's acceptable to only rebuild the view, since the old region's `RegionState` and its `ConstructionManager` remain intact in `RegionManager.getAllRegions()` regardless of whether its board is still rendered), and reset the `MonumentPanel` for the new region's `ConstructionManager`.
+
+- [ ] **Step 6: Run the full test suite, typecheck, and build**
+
+Run: `npm test` — expect all existing tests plus the new `RegionManager` passive-production test to pass.
+Run: `npx tsc --noEmit` — expect no errors.
+Run: `npm run build` — expect success.
+
+- [ ] **Step 7: Manual browser verification**
+
+Run `npm run dev`. Verify: on first load (no save), the game starts directly into the board with no offline panel. Play for a bit, note the URL, close the tab, reopen — the offline claim panel should appear showing accrued Gold since the tab closed, with working Claim/Double/Extend buttons. Verify a max-tier item can be built into a monument slot via the "Build Monument" button, with a visible countdown, and that "Speed Up (Ad)" completes it instantly. Once all slots complete, verify "Advance to Next Region" appears and, when clicked, swaps in a larger board.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/scenes/MainScene.ts src/ui/OfflineClaimPanel.ts src/ui/MonumentPanel.ts src/prestige/RegionManager.ts tests/prestige/RegionManager.test.ts
+git commit -m "feat: wire persistence, offline+ads, construction, and prestige into the playable scene"
+```
+
+---
+
+---
+
+### Task 16: Production Hardening & Treasury Payout
+
+**Added after the final whole-branch re-review (post-Task 15) found the branch "ready to merge, with fixes": three cheap production-readiness gaps (extend-cap doesn't persist, no Phaser scale config so the canvas overflows real browsers/portals, a corrupted save has no recovery path) plus a plan-level design gap (the Treasury track has no payoff — only Monuments gates region completion, and Ankh Gems are never actually earnable). The founder chose to close the Treasury gap now rather than defer it.**
+
+**Files:**
+- Modify: `src/config/GameConfig.ts`, `src/economy/IdleProducer.ts`, `src/persistence/SaveManager.ts`, `src/scenes/MainScene.ts`
+- Create: `src/ui/TreasuryPanel.ts`
+- Test: `tests/economy/IdleProducer.test.ts`, `tests/persistence/SaveManager.test.ts` (extend for the new field)
+
+**Interfaces:**
+- Consumes: `IdleProducer`, `SaveManager`/`SaveData`, `MergeBoard` (Treasury board), `AnalyticsService` (all already built/approved).
+- Produces: a Phaser game that fits real browser viewports, an offline cap that survives reload, a save load that degrades gracefully instead of crashing, and a working Treasury payout.
+
+- [ ] **Step 1: Add a Phaser scale config so the canvas fits real viewports**
+
+In `src/config/GameConfig.ts`, add a `scale` block to `GameConfig`:
+
+```ts
+scale: {
+  mode: Phaser.Scale.FIT,
+  autoCenter: Phaser.Scale.CENTER_BOTH
+}
+```
+
+This is also the actual root cause of the "Advance to Next Region button renders off-screen" observation from Task 15 verification — it wasn't a button-positioning bug, it was the canvas not fitting the viewport at all.
+
+- [ ] **Step 2: Persist the offline cap across reloads**
+
+Add `setCapMs(ms: number): void { this.capMs = ms; }` to `IdleProducer` (`src/economy/IdleProducer.ts`), alongside the existing `getCapMs()`. Write a test: after `setCapMs(...)`, `getCapMs()` returns exactly that value, and a subsequent `extendCapHours()` still adds on top of it correctly.
+
+Add `offlineCapMs: number` to the `SaveData` interface in `src/persistence/SaveManager.ts`. In `MainScene.saveGame()`, include `offlineCapMs: this.idleProducer.getCapMs()` in the constructed `SaveData`. Extend the `SaveManager` round-trip test to cover the new field.
+
+- [ ] **Step 3: Make a corrupted/invalid save degrade gracefully instead of crashing**
+
+In `MainScene.create()`, wrap the entire "restore from save" sequence (wallet deserialize, `regionManager.restoreState(...)`, `idleProducer.setCapMs(...)`) in a `try/catch`. On any thrown error, log a warning (`console.warn`) and proceed exactly as if `save` were `null` — fresh wallet, fresh `RegionManager` (already the default from field initialization), default cap. This is a deliberately blunt fallback (lose a corrupted save rather than parse-and-repair it) — appropriate for an MVP where a returning player hitting a rare corrupted-save crash is far worse than occasionally losing progress to a fresh start.
+
+- [ ] **Step 4: Build the Treasury payout**
+
+Create `src/ui/TreasuryPanel.ts`, structurally similar to `MonumentPanel` but simpler — no slots, no build timer, since collecting treasure is instant (narratively: you found it, you bank it):
+
+- A "Collect Treasure" button positioned below the Treasury board (mirroring "Build Monument" below the Monuments board).
+- On click: scan the Treasury `MergeBoard` for any item at `getMaxTier('treasury')` (tier 4, "Treasury-Ready Artifact"). If found: `board.removeItem(coord)`, grant a reward directly to the wallet — `wallet.add(ResourceType.Gold, 50, 'treasure_collected')` and `wallet.add(ResourceType.AnkhGems, 1, 'treasure_collected')` — and `analytics.track('treasure_collected')`. If no max-tier item exists, no-op (same pattern as "Build Monument" with nothing to build).
+- Wire it into `MainScene`: instantiate alongside `MonumentPanel` in `buildBoards()`, positioned near the Treasury board (e.g., same Y as the Monuments panel, X offset to align under the Treasury board), and `destroy()` it in `rebuildForActiveRegion()` alongside the other per-region UI.
+
+This finally gives Ankh Gems a real earn path (previously read-only/dead per the whole-branch review) and makes the Treasury board's grind meaningful.
+
+- [ ] **Step 5: Run the full test suite, typecheck, and build**
+
+Run: `npm test` — expect all existing tests plus the new `IdleProducer.setCapMs` and `SaveManager` field tests to pass.
+Run: `npx tsc --noEmit` — expect no errors.
+Run: `npm run build` — expect success.
+
+- [ ] **Step 6: Manual browser verification**
+
+Run `npm run dev`. Verify: the game canvas now fits the browser viewport without needing to scroll (or scales to fit, per the `FIT` mode) — the "Advance to Next Region" button should be visible without manual scrolling once a region completes. Verify a Treasury item merged to max tier can be collected via "Collect Treasure," crediting Gold and Ankh Gems (visible in the resource bar). Verify watching "Extend Cap," then reloading the page (simulate via a fresh offline gap), shows the extended cap was actually remembered. Verify that manually corrupting the save (e.g. via devtools, setting `activeRegionIndex` to an out-of-range value) results in a fresh game on reload rather than a crash/blank screen.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/config/GameConfig.ts src/economy/IdleProducer.ts src/persistence/SaveManager.ts src/scenes/MainScene.ts src/ui/TreasuryPanel.ts tests/economy/IdleProducer.test.ts tests/persistence/SaveManager.test.ts
+git commit -m "feat: add scale config, persist offline cap, harden save loading, and add Treasury payout"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every game-spec section (§2 core loop, §3 prestige, §4 offline+ads, §6 UI, §9 monetization, §10 IAP-readiness principles except cultural theming/LTO *content*, which is intentionally left as a data-driven scaffold rather than actual event content — appropriate for an MVP) maps to a task above. Art (§5) and naming (§11) are explicitly out of scope per the Global Constraints.
