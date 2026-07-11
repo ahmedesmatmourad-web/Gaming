@@ -17,7 +17,8 @@ describe('SaveManager', () => {
       wallet: { gold: 120 },
       lastActiveTimestamp: 123456,
       legacyMultiplier: 1.5,
-      activeRegionIndex: 1
+      activeRegionIndex: 1,
+      offlineCapMs: 5 * 60 * 60 * 1000
     };
     manager.save(data);
     expect(manager.load()).toEqual(data);
@@ -30,7 +31,7 @@ describe('SaveManager', () => {
 
   it('clears the save', () => {
     const manager = new SaveManager();
-    manager.save({ version: 1, wallet: {}, lastActiveTimestamp: 0, legacyMultiplier: 1, activeRegionIndex: 0 });
+    manager.save({ version: 1, wallet: {}, lastActiveTimestamp: 0, legacyMultiplier: 1, activeRegionIndex: 0, offlineCapMs: 0 });
     manager.clear();
     expect(manager.load()).toBeNull();
   });

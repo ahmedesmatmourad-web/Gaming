@@ -15,6 +15,7 @@ import { ConsoleAnalyticsService } from '../analytics/ConsoleAnalyticsService';
 import { AnalyticsService } from '../analytics/AnalyticsService';
 import { OfflineClaimPanel } from '../ui/OfflineClaimPanel';
 import { MonumentPanel } from '../ui/MonumentPanel';
+import { TreasuryPanel } from '../ui/TreasuryPanel';
 
 type Track = 'monuments' | 'treasury';
 type Selection = { row: number; col: number } | null;
@@ -36,6 +37,7 @@ export class MainScene extends Phaser.Scene {
   private monumentsView!: MergeBoardView;
   private treasuryView!: MergeBoardView;
   private monumentPanel!: MonumentPanel;
+  private treasuryPanel!: TreasuryPanel;
 
   private saveManager!: SaveManager;
   private adService!: AdService;
@@ -62,13 +64,29 @@ export class MainScene extends Phaser.Scene {
 
     // Load persistence before anything reads the wallet, so a restored wallet
     // becomes the single instance every downstream system references.
-    const save = this.saveManager.load();
+    let save = this.saveManager.load();
     if (save) {
-      this.wallet = Wallet.deserialize(save.wallet);
-      // Restore prestige progress before buildBoards() reads the active region to
-      // size the boards, so a returning player lands in the correct region at the
-      // correct legacy multiplier (and offline accrual uses the right rates).
-      this.regionManager.restoreState(save.activeRegionIndex, save.legacyMultiplier);
+      // Restore is deliberately all-or-nothing: any failure (corrupted wallet,
+      // out-of-range activeRegionIndex, etc.) discards the save and starts a
+      // fresh game rather than crashing on boot. Losing a rare corrupted save
+      // is far better for a returning player than a blank/broken screen. Reset
+      // every restored field back to a clean default in the catch, because
+      // restoreState() mutates RegionManager in place and may have thrown
+      // partway through, leaving it half-initialized.
+      try {
+        this.wallet = Wallet.deserialize(save.wallet);
+        // Restore prestige progress before buildBoards() reads the active region to
+        // size the boards, so a returning player lands in the correct region at the
+        // correct legacy multiplier (and offline accrual uses the right rates).
+        this.regionManager.restoreState(save.activeRegionIndex, save.legacyMultiplier);
+        this.idleProducer.setCapMs(save.offlineCapMs);
+      } catch (err) {
+        console.warn('Failed to restore save; starting a fresh game.', err);
+        this.wallet = new Wallet();
+        this.regionManager = new RegionManager();
+        this.idleProducer = new IdleProducer(4);
+        save = null;
+      }
     }
     this.offlineController = new OfflineClaimController(this.wallet, this.idleProducer, this.adService);
     this.analytics.track('session_start', { hadSave: !!save });
@@ -113,6 +131,19 @@ export class MainScene extends Phaser.Scene {
       panelY,
       () => this.monumentsView.refresh()
     );
+
+    this.treasuryPanel = new TreasuryPanel(
+      this,
+      this.treasuryBoard,
+      this.wallet,
+      this.analytics,
+      treasuryX,
+      panelY,
+      () => {
+        this.treasuryView.refresh();
+        this.resourceBar.refresh();
+      }
+    );
   }
 
   private setupPersistence(): void {
@@ -131,7 +162,8 @@ export class MainScene extends Phaser.Scene {
       wallet: this.wallet.serialize(),
       lastActiveTimestamp: Date.now(),
       legacyMultiplier: this.regionManager.getLegacyMultiplier().getValue(),
-      activeRegionIndex
+      activeRegionIndex,
+      offlineCapMs: this.idleProducer.getCapMs()
     };
     this.saveManager.save(data);
   }
@@ -230,6 +262,7 @@ export class MainScene extends Phaser.Scene {
     this.monumentsView.destroy();
     this.treasuryView.destroy();
     this.monumentPanel.destroy();
+    this.treasuryPanel.destroy();
     this.selections = { monuments: null, treasury: null };
     this.buildBoards();
   }

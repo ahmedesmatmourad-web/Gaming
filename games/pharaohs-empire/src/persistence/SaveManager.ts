@@ -6,6 +6,7 @@ export interface SaveData {
   lastActiveTimestamp: number;
   legacyMultiplier: number;
   activeRegionIndex: number;
+  offlineCapMs: number;
 }
 
 export class SaveManager {

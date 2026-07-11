@@ -9,6 +9,10 @@ export class IdleProducer {
     return this.capMs;
   }
 
+  setCapMs(ms: number): void {
+    this.capMs = ms;
+  }
+
   extendCapHours(additionalHours: number): void {
     this.capMs += additionalHours * 60 * 60 * 1000;
   }

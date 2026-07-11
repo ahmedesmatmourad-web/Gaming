@@ -21,6 +21,20 @@ describe('IdleProducer', () => {
     expect(producer.getCapMs()).toBe(5 * 60 * 60 * 1000);
   });
 
+  it('sets the cap to an exact value via setCapMs', () => {
+    const producer = new IdleProducer(4);
+    const restored = 7 * 60 * 60 * 1000;
+    producer.setCapMs(restored);
+    expect(producer.getCapMs()).toBe(restored);
+  });
+
+  it('extends correctly on top of a restored cap', () => {
+    const producer = new IdleProducer(4);
+    producer.setCapMs(5 * 60 * 60 * 1000);
+    producer.extendCapHours(2);
+    expect(producer.getCapMs()).toBe(7 * 60 * 60 * 1000);
+  });
+
   it('returns zero accrual with zero elapsed time', () => {
     const producer = new IdleProducer(4);
     const result = producer.computeAccrual({ gold: 100 }, 0);
